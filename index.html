@@ -1,0 +1,497 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<title>K線訊號掃描器</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a trading-desk tool — toolbar, summary strip, price+volume canvas, then the signal ledger and pattern statistics side by side (stacked on phones). */
+:root{
+  --bg:#f4f6f9; --panel:#ffffff; --fg:#18202c; --muted:#5b6677; --line:#dce1e9; --soft:#eef1f6;
+  --accent:#2c56c9; --ma60:#9a7b3c; --up:#d43d33; --down:#178a5f; --warn:#b97c0c;
+  --f-display:"Noto Serif TC","Songti TC",serif;
+  --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f141c; --panel:#161d28; --fg:#e4e9f0; --muted:#8e99ab; --line:#263142; --soft:#1c2533;
+  --accent:#7ea0ff; --ma60:#d2ae62; --up:#ff6a5c; --down:#38c48a; --warn:#e6ad44; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f141c; --panel:#161d28; --fg:#e4e9f0; --muted:#8e99ab; --line:#263142; --soft:#1c2533;
+  --accent:#7ea0ff; --ma60:#d2ae62; --up:#ff6a5c; --down:#38c48a; --warn:#e6ad44; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:14px;line-height:1.5}
+.wrap{max-width:1240px;margin:0 auto;padding-block:20px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:14px}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px}
+h1{font-family:var(--f-display);font-size:1.7rem;margin:0;letter-spacing:.02em;text-wrap:balance}
+.src{color:var(--muted);font-size:.85rem;margin-top:2px}
+.src b{color:var(--fg);font-weight:500}
+.tools{display:flex;flex-wrap:wrap;gap:8px}
+button,.btn{font:inherit;font-size:.88rem;border:1px solid var(--line);background:var(--panel);color:var(--fg);padding:7px 12px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+button:hover,.btn:hover{border-color:var(--accent)}
+button:focus-visible,.btn:focus-within,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--panel);font-weight:500}
+button.on{background:var(--soft);border-color:var(--accent);color:var(--accent);font-weight:500}
+.btn input{position:absolute;opacity:0;width:1px;height:1px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.strip>div:last-child:nth-child(odd){grid-column:1/-1}
+.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.strip>div{background:var(--panel);padding:10px 14px;min-width:0}
+.lab{font-size:.72rem;color:var(--muted);letter-spacing:.06em}
+.val{font-family:var(--f-mono);font-size:1.2rem;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.val.sm{font-family:var(--f-body);font-size:.95rem;font-weight:500}
+.up{color:var(--up)} .down{color:var(--down)} .warnc{color:var(--warn)}
+.chartbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.seg{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.seg .lab{margin-right:2px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:.78rem;color:var(--muted)}
+.legend i{display:inline-block;width:14px;height:2px;vertical-align:middle;margin-right:4px}
+.cv{position:relative;height:440px;touch-action:pan-y}
+@media (max-width:560px){.cv{height:360px}}
+canvas{display:block;width:100%;height:100%;cursor:crosshair}
+.tip{position:absolute;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font-size:.78rem;box-shadow:0 4px 14px rgba(0,0,0,.12);font-family:var(--f-mono);font-variant-numeric:tabular-nums;max-width:220px}
+.detail{padding:12px 14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.detail h3{margin:0;font-size:.95rem}
+.pat{display:flex;gap:10px;align-items:flex-start}
+.pat p{margin:0;color:var(--muted);font-size:.86rem;max-width:68ch}
+.pill{display:inline-block;font-size:.72rem;font-weight:500;padding:1px 8px;border-radius:99px;border:1px solid currentColor;white-space:nowrap}
+.pill.buy{color:var(--up)} .pill.sell{color:var(--down)} .pill.warn{color:var(--warn)} .pill.mute{color:var(--muted)}
+.grid2{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:14px}
+@media (max-width:900px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.ph{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.ph h2{margin:0;font-size:1rem}
+.scroll{overflow:auto;max-height:460px}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th,td{text-align:left;padding:7px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:.72rem;color:var(--muted);font-weight:500;letter-spacing:.05em;position:sticky;top:0;background:var(--panel)}
+td.num,th.num{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+tbody tr.click{cursor:pointer}
+tbody tr.click:hover{background:var(--soft)}
+tbody tr.sel{background:var(--soft)}
+.empty{padding:24px 14px;color:var(--muted);text-align:center}
+.paste{padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+textarea{width:100%;box-sizing:border-box;min-height:140px;font-family:var(--f-mono);font-size:.8rem;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:8px}
+.hint{color:var(--muted);font-size:.82rem;margin:0}
+code{font-family:var(--f-mono);font-size:.82em;background:var(--soft);padding:1px 5px;border-radius:4px}
+.err{color:var(--up);font-size:.85rem;margin:0}
+.foot{color:var(--muted);font-size:.78rem;max-width:80ch}
+.query{padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.qrow{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px}
+.qf{display:flex;flex-direction:column;gap:3px;min-width:0}
+.qf.grow{flex:1 1 100%;width:100%}
+.qf input,.qf select{font:inherit;font-size:.95rem;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:7px;padding:7px 10px}
+#code{width:9.5em;font-family:var(--f-mono);letter-spacing:.04em}
+#token{width:100%;box-sizing:border-box;font-family:var(--f-mono);font-size:.8rem}
+.hint.ok{color:var(--accent)} .hint.bad{color:var(--up)}
+label.chk{display:inline-flex;align-items:center;gap:5px;font-size:.85rem;cursor:pointer}
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>K線訊號掃描器</h1>
+      <div class="src" id="src">資料：<b>範例資料</b></div>
+    </div>
+    <div class="tools">
+      <label class="btn">上傳 CSV<input type="file" id="file" accept=".csv,.txt,text/csv"></label>
+      <button id="pasteBtn">貼上資料</button>
+      <button id="sampleBtn">載入範例</button>
+      <button id="colorBtn" title="切換紅漲綠跌／綠漲紅跌">配色：台股</button>
+    </div>
+  </header>
+
+  <form class="panel query" id="qform">
+    <div class="qrow">
+      <label class="qf"><span class="lab">股號</span><input id="code" inputmode="text" autocomplete="off" placeholder="2330 或 AAPL" maxlength="12"></label>
+      <label class="qf"><span class="lab">期間</span><select id="period"><option value="182">半年</option><option value="365" selected>1 年</option><option value="730">2 年</option><option value="1095">3 年</option></select></label>
+      <button class="primary" type="submit" id="goBtn">抓取並分析</button>
+      <button type="button" id="tokBtn">API 金鑰</button>
+    </div>
+    <div class="qrow" id="tokRow" hidden>
+      <label class="qf grow"><span class="lab">FinMind token（選填，可提高每小時查詢次數）</span><input id="token" autocomplete="off" placeholder="到 finmindtrade.com 免費註冊後取得"></label>
+    </div>
+    <p class="hint" id="qmsg">台股輸入代號（如 2330、0050），美股輸入英文代號（如 AAPL）。資料來源：FinMind 開放資料。</p>
+  </form>
+
+  <section class="panel" id="pastePanel" hidden>
+    <div class="paste">
+      <p class="hint">每行一天，欄位順序：<code>日期,開盤,最高,最低,收盤,成交量</code>。也接受 Yahoo Finance 匯出的英文欄位，以及證交所的民國日期（例如 115/10/21）。</p>
+      <textarea id="pasteTxt" spellcheck="false" placeholder="日期,開盤,最高,最低,收盤,成交量&#10;2026-10-20,1035,1050,1028,1045,32150000&#10;2026-10-21,1045,1060,1040,1058,28800000"></textarea>
+      <p class="err" id="pasteErr" hidden></p>
+      <div class="tools"><button class="primary" id="pasteGo">分析這份資料</button><button id="pasteCancel">取消</button></div>
+    </div>
+  </section>
+
+  <section class="strip" id="strip"></section>
+
+  <section class="panel">
+    <div class="chartbar">
+      <div class="seg" id="zoom"><span class="lab">顯示</span></div>
+      <div class="seg" id="sideF"><span class="lab">訊號</span></div>
+      <div class="legend"><span><i style="background:var(--accent)"></i>MA20</span><span><i style="background:var(--ma60)"></i>MA60</span><span>▲ 進場　▼ 出場　● 警示</span></div>
+    </div>
+    <div class="cv" id="cv"><canvas id="c"></canvas><div class="tip" id="tip" hidden></div></div>
+    <div class="detail" id="detail"></div>
+  </section>
+
+  <div class="grid2">
+    <section class="panel">
+      <div class="ph"><h2>訊號清單</h2>
+        <label class="chk"><input type="checkbox" id="confOnly"> 只看已確認</label>
+      </div>
+      <div class="scroll"><table><thead><tr><th>日期</th><th>型態</th><th>類型</th><th>確認</th><th>量能</th><th class="num">後5日</th></tr></thead><tbody id="list"></tbody></table></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2>型態歷史表現</h2><span class="hint">訊號出現後 5 個交易日</span></div>
+      <div class="scroll"><table><thead><tr><th>型態</th><th class="num">次數</th><th class="num">勝率</th><th class="num">平均報酬</th></tr></thead><tbody id="stats"></tbody></table></div>
+    </section>
+  </div>
+
+  <p class="foot">判讀規則依《K線型態大全：進場與出場訊號》整理：反轉型態需出現在對應趨勢之後，「已確認」代表隔日收盤站上訊號K高點（進場）或跌破低點（出場），「量增」代表成交量超過 20 日均量 1.3 倍。勝率只反映這份資料的過去表現，不構成投資建議。</p>
+</div>
+
+<script>
+(function(){
+"use strict";
+const $=id=>document.getElementById(id);
+const S={bars:[],ma10:[],ma20:[],ma60:[],vma:[],sigs:[],list:[],count:120,end:0,hover:-1,sel:-1,
+  side:{buy:true,sell:true,warn:true},confOnly:false,tw:true};
+
+const DESC={
+ "錘子線":"下跌後出現長下影線、小實體的K棒，代表低檔有買盤承接。",
+ "倒錘子線":"下跌後出現長上影線的小K棒，買方試圖反攻，需隔日紅K確認。",
+ "蜻蜓十字":"下跌後的 T 字十字線，開收盤都在最高附近，低檔被強力拉回。",
+ "吊人線":"上漲後出現的錘子形狀，代表高檔賣壓開始出現。",
+ "流星線":"上漲後出現長上影線的小K棒，衝高後被賣回，看跌反轉。",
+ "墓碑十字":"上漲後的倒 T 字十字線，高點全數被賣回，頭部訊號。",
+ "十字線":"趨勢末端開收盤幾乎相同，多空平衡，可能轉折，宜等待確認。",
+ "長紅突破":"長紅K收盤創 20 日新高，多方發動突破。",
+ "長黑跌破":"長黑K收盤創 20 日新低，空方發動跌破。",
+ "多頭吞噬":"下跌後一根紅K實體完全包覆前一根黑K，強烈看漲反轉。",
+ "空頭吞噬":"上漲後一根黑K實體完全包覆前一根紅K，強烈看跌反轉。",
+ "貫穿線":"下跌後開低，收盤回到前根黑K實體一半以上。",
+ "烏雲罩頂":"上漲後開高，收盤跌進前根紅K實體一半以下，止漲訊號。",
+ "多頭孕育線":"下跌後小紅K落在前根長黑K實體內，跌勢減緩，訊號較弱。",
+ "空頭孕育線":"上漲後小黑K落在前根長紅K實體內，漲勢減緩，訊號較弱。",
+ "平底":"下跌後兩根K線低點幾乎相同，形成短線支撐。",
+ "平頂":"上漲後兩根K線高點幾乎相同，形成短線壓力。",
+ "晨星":"長黑K、小實體、長紅K三根組合，底部反轉的經典訊號。",
+ "夜星":"長紅K、小實體、長黑K三根組合，頭部反轉的經典訊號。",
+ "紅三兵":"連續三根紅K階梯式墊高，上漲行情啟動。",
+ "黑三兵":"連續三根黑K階梯式走低，下跌行情啟動。",
+ "三內升":"多頭孕育線之後第三根紅K收過第一根開盤價，確認轉強。",
+ "三內降":"空頭孕育線之後第三根黑K跌破第一根開盤價，確認轉弱。",
+ "三外升":"多頭吞噬之後第三根紅K再創新高，確認轉強。",
+ "三外降":"空頭吞噬之後第三根黑K再創新低，確認轉弱。",
+ "向上缺口":"最低價高於前一日最高價且量增，屬突破缺口，回測不補可續抱。",
+ "向下缺口":"最高價低於前一日最低價且量增，屬跌破缺口，宜出場。",
+ "島狀反轉(頂)":"向上缺口後數日內又出現向下缺口，K線像孤島懸在高檔，強烈出場訊號。",
+ "島狀反轉(底)":"向下缺口後數日內又出現向上缺口，K線像孤島落在低檔，強烈進場訊號。",
+ "站上MA20":"收盤由下往上突破 20 日均線，且均線走平或上揚。",
+ "跌破MA20":"收盤由上往下跌破 20 日均線，且均線走平或下彎。"
+};
+const GROUP={"錘子線":"單根","倒錘子線":"單根","蜻蜓十字":"單根","吊人線":"單根","流星線":"單根","墓碑十字":"單根","十字線":"單根","長紅突破":"單根","長黑跌破":"單根",
+ "多頭吞噬":"雙根","空頭吞噬":"雙根","貫穿線":"雙根","烏雲罩頂":"雙根","多頭孕育線":"雙根","空頭孕育線":"雙根","平底":"雙根","平頂":"雙根",
+ "晨星":"三根","夜星":"三根","紅三兵":"三根","黑三兵":"三根","三內升":"三根","三內降":"三根","三外升":"三根","三外降":"三根",
+ "向上缺口":"缺口","向下缺口":"缺口","島狀反轉(頂)":"缺口","島狀反轉(底)":"缺口","站上MA20":"均線","跌破MA20":"均線"};
+
+/* ---------- data ---------- */
+function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function sample(){
+  const r=rng(20261021),out=[];const days=[];let d=new Date(2026,9,21);
+  while(days.length<260){const w=d.getDay();if(w!==0&&w!==6)days.unshift(new Date(d));d.setDate(d.getDate()-1)}
+  let p=580,drift=0,left=0;
+  for(const day of days){
+    if(left<=0){drift=(r()-.47)*0.006;left=12+Math.floor(r()*30)}left--;
+    const gap=(r()-.5)*0.012+(r()<.04?(r()-.5)*0.05:0);
+    const o=p*(1+gap);const ret=drift+(r()-.5)*0.032;const c=o*(1+ret);
+    const h=Math.max(o,c)*(1+r()*0.012*(r()<.25?2.5:1));const l=Math.min(o,c)*(1-r()*0.012*(r()<.25?2.5:1));
+    const v=Math.round(18e6*(0.6+r()*0.8)*(1+Math.abs(ret)*18+Math.abs(gap)*25));
+    out.push({d:fmt(day),o:rd(o),h:rd(h),l:rd(l),c:rd(c),v});p=c;
+  }
+  return out;
+}
+function rd(x){return Math.round(x*100)/100}
+function fmt(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")}
+
+function splitCSV(line){const out=[];let cur="",q=false;for(let i=0;i<line.length;i++){const ch=line[i];
+  if(q){if(ch==='"'){if(line[i+1]==='"'){cur+='"';i++}else q=false}else cur+=ch}
+  else if(ch==='"')q=true;else if(ch===","||ch==="\t"){out.push(cur);cur=""}else cur+=ch}out.push(cur);return out.map(s=>s.trim())}
+function num(s){if(s==null)return NaN;s=String(s).replace(/[,\s]/g,"").replace(/^[+X]/,"");return s===""||s==="--"?NaN:Number(s)}
+function parseDate(s){s=String(s).trim().replace(/[年月]/g,"/").replace(/日/g,"");const m=s.match(/^(\d{2,4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})/);
+  if(m){let y=+m[1];if(y<1911)y+=1911;return y+"-"+m[2].padStart(2,"0")+"-"+m[3].padStart(2,"0")}
+  const m2=s.match(/^(\d{4})(\d{2})(\d{2})$/);if(m2)return m2[1]+"-"+m2[2]+"-"+m2[3];return null}
+function parseCSV(text){
+  const lines=text.replace(/^﻿/,"").split(/\r?\n/).filter(l=>l.trim());
+  if(!lines.length)throw new Error("沒有讀到任何資料列。");
+  let hi=-1,map=null;
+  const pick=(cols,keys)=>cols.findIndex(c=>keys.some(k=>c.toLowerCase().replace(/\s/g,"")===k||c.includes(k)&&!c.toLowerCase().includes("adj")));
+  for(let i=0;i<Math.min(lines.length,10);i++){const cols=splitCSV(lines[i]);
+    const di=pick(cols,["date","日期","時間"]),oi=pick(cols,["open","開盤"]),h=pick(cols,["high","最高"]),l=pick(cols,["low","最低"]),c=pick(cols,["close","收盤"]),v=pick(cols,["volume","vol","成交量","成交股數"]);
+    if(di>-1&&oi>-1&&h>-1&&l>-1&&c>-1){hi=i;map={d:di,o:oi,h,l,c,v};break}}
+  if(!map){map={d:0,o:1,h:2,l:3,c:4,v:5};hi=parseDate(splitCSV(lines[0])[0])?-1:0}
+  const out=[];
+  for(let i=hi+1;i<lines.length;i++){const f=splitCSV(lines[i]);const d=parseDate(f[map.d]);
+    const b={d,o:num(f[map.o]),h:num(f[map.h]),l:num(f[map.l]),c:num(f[map.c]),v:map.v>-1?num(f[map.v]):0};
+    if(!d||[b.o,b.h,b.l,b.c].some(x=>!isFinite(x)||x<=0))continue;if(!isFinite(b.v))b.v=0;
+    b.h=Math.max(b.h,b.o,b.c);b.l=Math.min(b.l,b.o,b.c);out.push(b)}
+  if(out.length<30)throw new Error("有效資料只有 "+out.length+" 天，至少需要 30 天才能判斷趨勢。請確認欄位順序為 日期,開盤,最高,最低,收盤,成交量。");
+  out.sort((a,b)=>a.d<b.d?-1:a.d>b.d?1:0);
+  return out.filter((b,i)=>i===0||b.d!==out[i-1].d);
+}
+
+/* ---------- indicators & patterns ---------- */
+function sma(arr,n){const out=new Array(arr.length).fill(null);let s=0;for(let i=0;i<arr.length;i++){s+=arr[i];if(i>=n)s-=arr[i-n];if(i>=n-1)out[i]=s/n}return out}
+function analyse(){
+  const B=S.bars,n=B.length,C=B.map(b=>b.c);
+  S.ma10=sma(C,10);S.ma20=sma(C,20);S.ma60=sma(C,60);S.vma=sma(B.map(b=>b.v),20);
+  const body=b=>Math.abs(b.c-b.o),rng_=b=>b.h-b.l,up=b=>b.h-Math.max(b.o,b.c),lo=b=>Math.min(b.o,b.c)-b.l,bull=b=>b.c>b.o,bear=b=>b.c<b.o;
+  const avg=(i,f)=>{let s=0,k=0;for(let j=Math.max(0,i-10);j<i;j++){s+=f(B[j]);k++}return k?s/k:f(B[i])};
+  const trend=k=>{if(k<7||S.ma10[k-1]==null)return 0;const c=B[k-1].c;if(c<S.ma10[k-1]&&c<B[k-6].c)return -1;if(c>S.ma10[k-1]&&c>B[k-6].c)return 1;return 0};
+  const hiN=(i,m)=>{let x=-Infinity;for(let j=Math.max(0,i-m);j<i;j++)x=Math.max(x,B[j].h);return x};
+  const loN=(i,m)=>{let x=Infinity;for(let j=Math.max(0,i-m);j<i;j++)x=Math.min(x,B[j].l);return x};
+  S.sigs=[];S.list=[];
+  for(let i=0;i<n;i++){
+    const b=B[i],p=B[i-1],a=B[i-2],ab=avg(i,body),ar=avg(i,rng_),R=rng_(b),bd=body(b),sig=[];
+    const add=(name,side,strong)=>sig.push({name,side,strong:!!strong});
+    const t0=trend(i),t1=i>0?trend(i-1):0,t2=i>1?trend(i-2):0;
+    const isDoji=R>0&&bd<=R*0.1;
+    // single
+    if(R>0){
+      const hammer=lo(b)>=2*Math.max(bd,R*0.05)&&up(b)<=R*0.15&&!isDoji;
+      const inv=up(b)>=2*Math.max(bd,R*0.05)&&lo(b)<=R*0.15&&!isDoji;
+      const dragon=isDoji&&lo(b)>=R*0.65, grave=isDoji&&up(b)>=R*0.65;
+      if(t0<0){if(hammer)add("錘子線","buy");else if(inv)add("倒錘子線","buy");else if(dragon)add("蜻蜓十字","buy")}
+      if(t0>0){if(hammer)add("吊人線","sell");else if(inv)add("流星線","sell");else if(grave)add("墓碑十字","sell")}
+      if(isDoji&&!dragon&&!grave&&t0!==0&&R>ar*0.5)add("十字線","warn");
+      if(i>=20){if(bull(b)&&bd>ab*1.8&&b.c>hiN(i,20))add("長紅突破","buy",true);
+        if(bear(b)&&bd>ab*1.8&&b.c<loN(i,20))add("長黑跌破","sell",true)}
+    }
+    // double
+    if(p){const pb=body(p),tol=ar*0.06;
+      if(t1<0&&bear(p)&&bull(b)&&b.o<=p.c&&b.c>=p.o&&bd>pb)add("多頭吞噬","buy",true);
+      else if(t1<0&&bear(p)&&pb>ab&&bull(b)&&b.o<p.c&&b.c>(p.o+p.c)/2&&b.c<p.o)add("貫穿線","buy");
+      else if(t1<0&&bear(p)&&pb>ab*1.1&&bd<pb*0.5&&Math.max(b.o,b.c)<=p.o&&Math.min(b.o,b.c)>=p.c&&!bear(b))add("多頭孕育線","buy");
+      else if(t1<0&&bear(p)&&bull(b)&&Math.abs(b.l-p.l)<=tol)add("平底","buy");
+      if(t1>0&&bull(p)&&bear(b)&&b.o>=p.c&&b.c<=p.o&&bd>pb)add("空頭吞噬","sell",true);
+      else if(t1>0&&bull(p)&&pb>ab&&bear(b)&&b.o>p.c&&b.c<(p.o+p.c)/2&&b.c>p.o)add("烏雲罩頂","sell");
+      else if(t1>0&&bull(p)&&pb>ab*1.1&&bd<pb*0.5&&Math.max(b.o,b.c)<=p.c&&Math.min(b.o,b.c)>=p.o&&!bull(b))add("空頭孕育線","sell");
+      else if(t1>0&&bull(p)&&bear(b)&&Math.abs(b.h-p.h)<=tol)add("平頂","sell");
+      // gaps
+      const vUp=S.vma[i-1]&&b.v>S.vma[i-1]*1.3;
+      if(b.l>p.h&&vUp)add("向上缺口","buy");
+      if(b.h<p.l&&vUp)add("向下缺口","sell");
+      if(b.h<p.l){for(let j=i-1;j>=Math.max(1,i-6);j--){if(B[j].l>B[j-1].h&&Math.min(...B.slice(j,i).map(x=>x.l))>b.h){add("島狀反轉(頂)","sell",true);break}}}
+      if(b.l>p.h){for(let j=i-1;j>=Math.max(1,i-6);j--){if(B[j].h<B[j-1].l&&Math.max(...B.slice(j,i).map(x=>x.h))<b.l){add("島狀反轉(底)","buy",true);break}}}
+      // MA cross
+      if(S.ma20[i]!=null&&S.ma20[i-1]!=null&&i>=25){const sl=S.ma20[i]-S.ma20[i-5];
+        if(p.c<=S.ma20[i-1]&&b.c>S.ma20[i]&&sl>=-S.ma20[i]*0.002)add("站上MA20","buy");
+        if(p.c>=S.ma20[i-1]&&b.c<S.ma20[i]&&sl<=S.ma20[i]*0.002)add("跌破MA20","sell")}
+    }
+    // triple
+    if(a){const abd=body(a),pbd=body(p);
+      if(t2<0&&bear(a)&&abd>ab&&pbd<abd*0.4&&bull(b)&&b.c>(a.o+a.c)/2&&Math.max(p.o,p.c)<a.o)add("晨星","buy",true);
+      if(t2>0&&bull(a)&&abd>ab&&pbd<abd*0.4&&bear(b)&&b.c<(a.o+a.c)/2&&Math.min(p.o,p.c)>a.o)add("夜星","sell",true);
+      const soldier=(x,y)=>bull(y)&&y.c>x.c&&y.o>=x.o&&y.o<=x.c&&body(y)>ab*0.6&&up(y)<body(y)*0.5;
+      const crow=(x,y)=>bear(y)&&y.c<x.c&&y.o<=x.o&&y.o>=x.c&&body(y)>ab*0.6&&lo(y)<body(y)*0.5;
+      if(t2<=0&&bull(a)&&body(a)>ab*0.6&&soldier(a,p)&&soldier(p,b))add("紅三兵","buy",true);
+      if(t2>=0&&bear(a)&&body(a)>ab*0.6&&crow(a,p)&&crow(p,b))add("黑三兵","sell",true);
+      if(t2<0&&bear(a)&&abd>ab&&bull(p)&&p.c<=a.o&&p.o>=a.c&&pbd<abd*0.6&&bull(b)&&b.c>a.o)add("三內升","buy");
+      if(t2>0&&bull(a)&&abd>ab&&bear(p)&&p.c>=a.o&&p.o<=a.c&&pbd<abd*0.6&&bear(b)&&b.c<a.o)add("三內降","sell");
+      if(t2<0&&bear(a)&&bull(p)&&p.o<=a.c&&p.c>=a.o&&pbd>abd&&bull(b)&&b.c>p.c)add("三外升","buy");
+      if(t2>0&&bull(a)&&bear(p)&&p.o>=a.c&&p.c<=a.o&&pbd>abd&&bear(b)&&b.c<p.c)add("三外降","sell");
+    }
+    // meta
+    const nx=B[i+1],volUp=S.vma[i-1]?b.v>S.vma[i-1]*1.3:false,fwd=i+5<n?B[i+5].c/b.c-1:null;
+    sig.forEach(s=>{s.i=i;s.vol=volUp;s.fwd=fwd;
+      s.conf=!nx?null:s.side==="buy"?nx.c>b.h:s.side==="sell"?nx.c<b.l:null;
+      S.list.push(s)});
+    S.sigs.push(sig);
+  }
+}
+
+/* ---------- rendering ---------- */
+const cvs=$("c"),ctx=cvs.getContext("2d"),tip=$("tip");
+let geo=null;
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+function vis(s){return S.side[s.side]&&(!S.confOnly||s.conf===true)}
+function draw(){
+  const B=S.bars,n=B.length;if(!n)return;
+  const W=cvs.clientWidth,H=cvs.clientHeight,dpr=window.devicePixelRatio||1;
+  if(cvs.width!==Math.round(W*dpr)||cvs.height!==Math.round(H*dpr)){cvs.width=Math.round(W*dpr);cvs.height=Math.round(H*dpr)}
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+  const col={fg:css("--fg"),mu:css("--muted"),ln:css("--line"),ac:css("--accent"),m6:css("--ma60"),up:css(S.tw?"--up":"--down"),dn:css(S.tw?"--down":"--up"),buy:css("--up"),sell:css("--down"),warn:css("--warn"),soft:css("--soft"),panel:css("--panel")};
+  const count=Math.min(S.count,n);S.end=Math.max(count,Math.min(n,S.end));const st=S.end-count;
+  const L=8,Rm=W<500?50:60,T=14,plotW=W-L-Rm,priceH=(H-36)*0.76,volT=T+priceH+10,volH=(H-36)*0.24-10,bottom=volT+volH;
+  const bw=plotW/count;
+  let mx=-Infinity,mn=Infinity,vmx=0;
+  for(let i=st;i<S.end;i++){mx=Math.max(mx,B[i].h);mn=Math.min(mn,B[i].l);vmx=Math.max(vmx,B[i].v);
+    [S.ma20[i],S.ma60[i]].forEach(m=>{if(m!=null){mx=Math.max(mx,m);mn=Math.min(mn,m)}})}
+  const pad=(mx-mn)*0.08||1;mx+=pad;mn-=pad;
+  const y=v=>T+(mx-v)/(mx-mn)*priceH,x=i=>L+(i-st+0.5)*bw,yv=v=>bottom-(vmx?v/vmx*volH:0);
+  geo={st,bw,L,plotW,x,y,T,bottom,count};
+  ctx.font='11px "IBM Plex Mono",ui-monospace,monospace';ctx.textBaseline="middle";
+  // grid
+  const step=nice((mx-mn)/5);ctx.strokeStyle=col.ln;ctx.lineWidth=1;ctx.fillStyle=col.mu;ctx.textAlign="left";
+  for(let v=Math.ceil(mn/step)*step;v<mx;v+=step){const yy=Math.round(y(v))+.5;ctx.beginPath();ctx.moveTo(L,yy);ctx.lineTo(L+plotW,yy);ctx.stroke();ctx.fillText(fmtP(v,step),L+plotW+6,yy)}
+  ctx.beginPath();ctx.moveTo(L,Math.round(volT-5)+.5);ctx.lineTo(L+plotW,Math.round(volT-5)+.5);ctx.stroke();
+  ctx.fillText("量",L+plotW+6,volT+6);
+  // date labels
+  ctx.textAlign="center";const every=Math.max(1,Math.ceil(70/bw));let lastM="";
+  for(let i=st;i<S.end;i++){if((i-st)%every===0){const d=B[i].d;const lab=count>180?d.slice(0,7).replace("-","/"):d.slice(5).replace("-","/");if(lab!==lastM){ctx.fillText(lab,x(i),bottom+14);lastM=lab}}}
+  // selection band
+  if(S.sel>=st&&S.sel<S.end){ctx.fillStyle=col.soft;ctx.fillRect(x(S.sel)-bw/2,T,bw,bottom-T)}
+  // volume
+  for(let i=st;i<S.end;i++){const b=B[i];ctx.globalAlpha=.45;ctx.fillStyle=b.c>=b.o?col.up:col.dn;const w=Math.max(1,bw*0.7);ctx.fillRect(x(i)-w/2,yv(b.v),w,bottom-yv(b.v))}
+  ctx.globalAlpha=1;
+  // candles
+  for(let i=st;i<S.end;i++){const b=B[i],c=b.c>=b.o?col.up:col.dn;ctx.strokeStyle=c;ctx.fillStyle=c;
+    const xx=Math.round(x(i))+.5;ctx.beginPath();ctx.moveTo(xx,y(b.h));ctx.lineTo(xx,y(b.l));ctx.stroke();
+    const w=Math.max(1,bw*0.68),top=y(Math.max(b.o,b.c)),h=Math.max(1,Math.abs(y(b.o)-y(b.c)));ctx.fillRect(x(i)-w/2,top,w,h)}
+  // MAs
+  [[S.ma20,col.ac],[S.ma60,col.m6]].forEach(([m,c])=>{ctx.strokeStyle=c;ctx.lineWidth=1.5;ctx.beginPath();let on=false;
+    for(let i=st;i<S.end;i++){if(m[i]==null){on=false;continue}const xx=x(i),yy=y(m[i]);on?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy);on=true}ctx.stroke()});
+  ctx.lineWidth=1;
+  // markers
+  const ms=Math.max(4,Math.min(7,bw*0.45));
+  for(let i=st;i<S.end;i++){const sg=S.sigs[i].filter(vis);if(!sg.length)continue;const b=B[i];
+    const hasB=sg.some(s=>s.side==="buy"),hasS=sg.some(s=>s.side==="sell"),hasW=sg.some(s=>s.side==="warn");
+    if(hasB){const yy=y(b.l)+ms+4;tri(x(i),yy,ms,1,col.buy)}
+    if(hasS){const yy=y(b.h)-ms-4;tri(x(i),yy,ms,-1,col.sell)}
+    if(hasW&&!hasB&&!hasS){ctx.fillStyle=col.warn;ctx.beginPath();ctx.arc(x(i),y(b.h)-ms-2,ms*0.55,0,7);ctx.fill()}}
+  // crosshair
+  if(S.hover>=st&&S.hover<S.end){ctx.strokeStyle=col.mu;ctx.setLineDash([3,3]);const xx=Math.round(x(S.hover))+.5;ctx.beginPath();ctx.moveTo(xx,T);ctx.lineTo(xx,bottom);ctx.stroke();ctx.setLineDash([])}
+  // last price tag
+  const lb=B[S.end-1],ly=y(lb.c);ctx.fillStyle=lb.c>=lb.o?col.up:col.dn;ctx.fillRect(L+plotW+1,ly-8,Rm-2,16);ctx.fillStyle=col.panel;ctx.textAlign="left";ctx.fillText(fmtP(lb.c,step),L+plotW+5,ly);
+}
+function tri(cx,cy,s,dir,c){ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(cx,cy-dir*s);ctx.lineTo(cx-s,cy+dir*s*0.7);ctx.lineTo(cx+s,cy+dir*s*0.7);ctx.closePath();ctx.fill()}
+function nice(r){const p=Math.pow(10,Math.floor(Math.log10(r)));const f=r/p;return(f<1.5?1:f<3?2:f<7?5:10)*p}
+function fmtP(v,step){const d=step<0.1?2:step<1?1:0;return v.toFixed(d)}
+const pct=v=>v==null?"—":(v>0?"+":"")+(v*100).toFixed(2)+"%";
+const fmtV=v=>v>=1e8?(v/1e8).toFixed(2)+"億":v>=1e4?(v/1e4).toFixed(0)+"萬":String(v);
+
+/* ---------- panels ---------- */
+function strip(){
+  const B=S.bars,n=B.length,l=B[n-1],p=B[n-2],ch=l.c/p.c-1;
+  const recent=S.list.filter(s=>s.i>=n-20);const nb=recent.filter(s=>s.side==="buy").length,ns=recent.filter(s=>s.side==="sell").length;
+  const last=[...S.list].reverse().find(s=>s.side!=="warn");
+  const trend=S.ma20[n-1]&&S.ma60[n-1]?(l.c>S.ma20[n-1]&&S.ma20[n-1]>S.ma60[n-1]?["多頭排列","up"]:l.c<S.ma20[n-1]&&S.ma20[n-1]<S.ma60[n-1]?["空頭排列","down"]:["盤整","warnc"]):["資料不足","warnc"];
+  const upc=S.tw?"up":"down",dnc=S.tw?"down":"up";
+  $("strip").innerHTML=
+   `<div><div class="lab">最新收盤 · ${l.d}</div><div class="val">${l.c.toLocaleString()}</div></div>`+
+   `<div><div class="lab">漲跌幅</div><div class="val ${ch>=0?upc:dnc}">${pct(ch)}</div></div>`+
+   `<div><div class="lab">均線趨勢</div><div class="val sm ${trend[1]==="up"?upc:trend[1]==="down"?dnc:"warnc"}">${trend[0]}</div></div>`+
+   `<div><div class="lab">近 20 日訊號</div><div class="val sm"><span class="up">進場 ${nb}</span>　<span class="down">出場 ${ns}</span></div></div>`+
+   `<div><div class="lab">最近訊號</div><div class="val sm ${last?(last.side==="buy"?"up":"down"):""}">${last?last.name+" · "+B[last.i].d.slice(5):"—"}</div></div>`;
+}
+function sideLabel(s){return s==="buy"?"進場":s==="sell"?"出場":"警示"}
+function list(){
+  const rows=S.list.filter(vis).slice().reverse();const tb=$("list");
+  if(!rows.length){tb.innerHTML=`<tr><td colspan="6" class="empty">目前篩選條件下沒有訊號。</td></tr>`;return}
+  tb.innerHTML=rows.map(s=>{const f=s.fwd;const good=f==null?"":(s.side==="buy"?f>0:s.side==="sell"?f<0:false)?"up":"down";
+    return `<tr class="click${s.i===S.sel?" sel":""}" data-i="${s.i}"><td>${S.bars[s.i].d}</td><td>${s.name}${s.strong?" ★":""}</td><td><span class="pill ${s.side}">${sideLabel(s.side)}</span></td>`+
+    `<td>${s.conf==null?'<span class="pill mute">待確認</span>':s.conf?'<span class="pill buy" style="color:var(--accent)">已確認</span>':'<span class="pill mute">未確認</span>'}</td>`+
+    `<td>${s.vol?"量增":"—"}</td><td class="num ${s.side==="warn"?"":good}">${pct(f)}</td></tr>`}).join("");
+}
+function stats(){
+  const m={};S.list.forEach(s=>{if(s.side==="warn"||s.fwd==null)return;const k=s.name;(m[k]=m[k]||{side:s.side,n:0,w:0,r:0});const d=s.side==="buy"?s.fwd:-s.fwd;m[k].n++;m[k].r+=d;if(d>0)m[k].w++});
+  const rows=Object.entries(m).sort((a,b)=>b[1].n-a[1].n);
+  $("stats").innerHTML=rows.length?rows.map(([k,v])=>`<tr><td><span class="pill ${v.side}">${sideLabel(v.side)}</span> ${k}</td><td class="num">${v.n}</td><td class="num">${(v.w/v.n*100).toFixed(0)}%</td><td class="num ${v.r>0?"up":"down"}">${pct(v.r/v.n)}</td></tr>`).join(""):`<tr><td colspan="4" class="empty">資料不足以統計。</td></tr>`;
+}
+function detail(){
+  const i=S.sel>=0?S.sel:S.bars.length-1,b=S.bars[i],sg=S.sigs[i];
+  const prev=S.bars[i-1],ch=prev?b.c/prev.c-1:0;
+  let h=`<h3>${b.d}　<span style="font-family:var(--f-mono);font-weight:400;font-size:.85rem;color:var(--muted)">開 ${b.o}　高 ${b.h}　低 ${b.l}　收 ${b.c}　${pct(ch)}　量 ${fmtV(b.v)}</span></h3>`;
+  h+=sg.length?sg.map(s=>`<div class="pat"><span class="pill ${s.side}">${sideLabel(s.side)}</span><div><b>${s.name}</b>（${GROUP[s.name]}${s.strong?"・強訊號":""}${s.conf===true?"・已確認":s.conf===false?"・未確認":"・待隔日確認"}${s.vol?"・量增":""}）<p>${DESC[s.name]||""}</p></div></div>`).join(""):`<p class="hint">這一天沒有偵測到型態。點圖上的 ▲▼ 標記或下方清單，可查看該日的型態說明。</p>`;
+  $("detail").innerHTML=h;
+}
+function refresh(){draw();list();detail()}
+function load(bars,label){S.bars=bars;S.end=bars.length;S.sel=-1;S.hover=-1;analyse();
+  $("src").innerHTML="資料：<b>"+label+"</b>　"+bars[0].d+" ~ "+bars[bars.length-1].d+"，共 "+bars.length+" 個交易日";
+  strip();stats();refresh()}
+
+/* ---------- controls ---------- */
+[["60 天",60],["120 天",120],["250 天",250],["全部",1e9]].forEach(([t,v])=>{const b=document.createElement("button");b.textContent=t;b.dataset.v=v;if(v===120)b.classList.add("on");
+  b.onclick=()=>{S.count=v;document.querySelectorAll("#zoom button").forEach(x=>x.classList.toggle("on",x===b));draw()};$("zoom").appendChild(b)});
+[["進場","buy"],["出場","sell"],["警示","warn"]].forEach(([t,k])=>{const b=document.createElement("button");b.textContent=t;b.classList.add("on");
+  b.onclick=()=>{S.side[k]=!S.side[k];b.classList.toggle("on",S.side[k]);refresh()};$("sideF").appendChild(b)});
+$("confOnly").onchange=e=>{S.confOnly=e.target.checked;refresh()};
+$("colorBtn").onclick=()=>{S.tw=!S.tw;$("colorBtn").textContent="配色："+(S.tw?"台股":"美股");strip();draw()};
+$("sampleBtn").onclick=()=>load(sample(),"範例資料（模擬價格，非真實股票）");
+$("file").onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();
+  r.onload=()=>{try{load(parseCSV(String(r.result)),f.name)}catch(err){$("pastePanel").hidden=false;$("pasteErr").hidden=false;$("pasteErr").textContent=f.name+"：" +err.message}};
+  r.readAsText(f);e.target.value=""};
+$("pasteBtn").onclick=()=>{$("pastePanel").hidden=false;$("pasteErr").hidden=true;$("pasteTxt").focus()};
+$("pasteCancel").onclick=()=>{$("pastePanel").hidden=true};
+$("pasteGo").onclick=()=>{try{load(parseCSV($("pasteTxt").value),"貼上的資料");$("pastePanel").hidden=true}catch(err){$("pasteErr").hidden=false;$("pasteErr").textContent=err.message}};
+$("list").onclick=e=>{const tr=e.target.closest("tr[data-i]");if(!tr)return;const i=+tr.dataset.i;S.sel=i;
+  const cnt=Math.min(S.count,S.bars.length);if(i<S.end-cnt||i>=S.end)S.end=Math.min(S.bars.length,i+Math.floor(cnt/2));
+  refresh();$("cv").scrollIntoView({behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"center"})};
+
+function idxAt(clientX){if(!geo)return -1;const r=cvs.getBoundingClientRect();const i=geo.st+Math.floor((clientX-r.left-geo.L)/geo.bw);return i>=geo.st&&i<S.end?i:-1}
+let drag=null;
+cvs.addEventListener("pointerdown",e=>{drag={x:e.clientX,end:S.end,moved:false};cvs.setPointerCapture(e.pointerId)});
+cvs.addEventListener("pointermove",e=>{
+  if(drag&&geo){const dx=e.clientX-drag.x;if(Math.abs(dx)>6)drag.moved=true;
+    if(drag.moved){const sh=Math.round(dx/geo.bw);const cnt=Math.min(S.count,S.bars.length);S.end=Math.max(cnt,Math.min(S.bars.length,drag.end-sh));tip.hidden=true;draw();return}}
+  const i=idxAt(e.clientX);S.hover=i;showTip(e,i);draw()});
+cvs.addEventListener("pointerup",e=>{if(drag&&!drag.moved){const i=idxAt(e.clientX);if(i>=0){S.sel=i;refresh()}}drag=null});
+cvs.addEventListener("pointerleave",()=>{if(!drag){S.hover=-1;tip.hidden=true;draw()}});
+cvs.addEventListener("wheel",e=>{if(!e.ctrlKey&&Math.abs(e.deltaY)<Math.abs(e.deltaX))return;e.preventDefault();const cnt=Math.min(S.count,S.bars.length);S.count=Math.max(20,Math.round(cnt*(e.deltaY>0?1.15:0.87)));document.querySelectorAll("#zoom button").forEach(x=>x.classList.remove("on"));draw()},{passive:false});
+function showTip(e,i){if(i<0){tip.hidden=true;return}const b=S.bars[i],sg=S.sigs[i].filter(vis);
+  tip.innerHTML=`<b>${b.d}</b><br>開 ${b.o}　高 ${b.h}<br>低 ${b.l}　收 ${b.c}<br>量 ${fmtV(b.v)}`+(sg.length?"<br>"+sg.map(s=>`<span class="${s.side==="buy"?"up":s.side==="sell"?"down":"warnc"}">${s.side==="buy"?"▲":s.side==="sell"?"▼":"●"} ${s.name}</span>`).join("<br>"):"");
+  tip.hidden=false;const r=$("cv").getBoundingClientRect();let lx=e.clientX-r.left+14;if(lx+tip.offsetWidth>r.width-4)lx=e.clientX-r.left-tip.offsetWidth-14;
+  tip.style.left=Math.max(4,lx)+"px";tip.style.top="10px"}
+
+/* ---------- fetch by stock code (FinMind) ---------- */
+const API="https://api.finmindtrade.com/api/v4/data";
+const store={get(k){try{return localStorage.getItem(k)||""}catch(e){return""}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+$("code").value=store.get("kscan.code");$("token").value=store.get("kscan.token");
+$("tokBtn").onclick=()=>{$("tokRow").hidden=!$("tokRow").hidden};
+function qmsg(t,cls){const m=$("qmsg");m.textContent=t;m.className="hint"+(cls?" "+cls:"")}
+async function api(params){
+  const tok=$("token").value.trim();const q=new URLSearchParams(params);if(tok)q.set("token",tok);
+  let r;try{r=await fetch(API+"?"+q.toString())}catch(e){const x=new Error("net");x.net=true;throw x}
+  const j=await r.json().catch(()=>null);
+  if(!r.ok||!j||j.status!==200)throw new Error((j&&j.msg)||("HTTP "+r.status));
+  return j.data||[];
+}
+async function fetchCode(code,days){
+  const start=fmt(new Date(Date.now()-days*864e5-90*864e5)); // 多抓 90 天讓 MA60 從第一天就有值
+  const us=/^[A-Z][A-Z.\-]*$/.test(code);
+  if(us){
+    const d=await api({dataset:"USStockPrice",data_id:code,start_date:start});
+    return {name:code,bars:d.map(x=>({d:x.date.slice(0,10),o:+x.Open,h:+x.High,l:+x.Low,c:+x.Close,v:+x.Volume||0}))};
+  }
+  const [d,info]=await Promise.all([api({dataset:"TaiwanStockPrice",data_id:code,start_date:start}),api({dataset:"TaiwanStockInfo",data_id:code}).catch(()=>[])]);
+  return {name:code+(info[0]?" "+info[0].stock_name:""),bars:d.map(x=>({d:x.date,o:+x.open,h:+x.max,l:+x.min,c:+x.close,v:+x.Trading_Volume||0}))};
+}
+$("qform").addEventListener("submit",async e=>{
+  e.preventDefault();
+  const code=$("code").value.trim().toUpperCase();
+  if(!code){qmsg("請先輸入股號，例如 2330。","bad");$("code").focus();return}
+  store.set("kscan.code",code);store.set("kscan.token",$("token").value.trim());
+  const btn=$("goBtn");btn.disabled=true;btn.textContent="抓取中…";qmsg("正在向 FinMind 抓取 "+code+" 的日K資料…");
+  try{
+    const {name,bars}=await fetchCode(code,+$("period").value);
+    const clean=bars.filter(b=>[b.o,b.h,b.l,b.c].every(x=>isFinite(x)&&x>0)).map(b=>({...b,h:Math.max(b.h,b.o,b.c),l:Math.min(b.l,b.o,b.c)}));
+    if(clean.length<30)throw new Error(clean.length?"只抓到 "+clean.length+" 天資料，太少無法分析。":"查不到代號 "+code+" 的資料，請確認股號是否正確（上櫃、興櫃也適用）。");
+    clean.sort((a,b)=>a.d<b.d?-1:1);
+    load(clean,name+"（FinMind）");
+    qmsg("已載入 "+name+"，最新資料日期 "+clean[clean.length-1].d+"。","ok");
+  }catch(err){
+    const blocked=!!err.net;
+    qmsg(blocked?"無法連線到資料來源。在 claude.ai 或 Claude App 裡開啟時，平台會擋住所有對外連線，自動抓取只能在下載的 HTML 檔用電腦瀏覽器開啟時使用。這裡可以改用「上傳 CSV」或「貼上資料」。"
+      :"抓取失敗："+err.message+(/limit|上限|402|429/i.test(err.message)?"（已達免費查詢上限，請稍後再試或填入 API 金鑰）":""),"bad");
+  }finally{btn.disabled=false;btn.textContent="抓取並分析"}
+});
+const h0=(location.hash||"").slice(1);
+if(/^[A-Za-z0-9.\-]{2,12}$/.test(h0)){$("code").value=h0.toUpperCase();setTimeout(()=>$("qform").requestSubmit(),0)}
+
+new ResizeObserver(()=>draw()).observe($("cv"));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>draw());
+new MutationObserver(()=>draw()).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
+load(sample(),"範例資料（模擬價格，非真實股票）");
+})();
+</script>
+
+</body></html>
